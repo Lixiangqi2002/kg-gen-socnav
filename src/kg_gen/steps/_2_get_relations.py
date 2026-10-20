@@ -106,6 +106,8 @@ def _get_relations_litellm(
     api_base: Optional[str] = None,
     temperature: float = 0.0,
 ) -> List[Tuple[str, str, str]]:
+    if not entities:
+        return []
     prompt_template = _load_relations_prompt()
     entities_str = "\n".join(f"- {e}" for e in entities)
     user_prompt = f"""
@@ -133,6 +135,40 @@ Here is the source text to analyze:
         for def_schema in schema["$defs"].values():
             if def_schema.get("type") == "object":
                 def_schema["additionalProperties"] = False
+
+    if model.startswith("hosted_vllm/"):
+        response = litellm.completion(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract subject-predicate-object relations supported by the source text. "
+                        "Each subject and object must exactly match a supplied entity. "
+                        "Do not attach a one-place action to an unrelated entity just to make a triple. "
+                        "If no valid relation exists, return an empty relations list. "
+                        "Return only JSON. /no_think"
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=2048,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "relations_response",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+            api_key=api_key,
+            api_base=api_base,
+        )
+        relations = parse_relations_response(
+            response.choices[0].message.content, entities, RelationsResponse
+        )
+        return [relation for relation in relations if relation[0] != relation[2]]
 
     kwargs = {
         "model": model,

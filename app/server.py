@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 import json
+import os
 
 import logging
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -13,6 +14,7 @@ from pydantic import ValidationError
 
 from src.kg_gen.kg_gen import KGGen
 from src.kg_gen.models import Graph
+from kg_gen.steps._3_deduplicate import DeduplicateMethod
 from src.kg_gen.utils.visualize_kg import _build_view_model
 
 APP_DIR = Path(__file__).resolve().parent
@@ -74,7 +76,10 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-kg_gen = KGGen()
+REMOTE_QWEN_MODEL = "hosted_vllm/know2socnav-qwen3-30b-a3b"
+REMOTE_QWEN_API_BASE = os.environ.get(
+    "KGGEN_REMOTE_QWEN_API_BASE", "http://10.137.6.216:8000/v1"
+)
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -160,15 +165,15 @@ def _parse_bool(value: Optional[str]) -> bool:
 
 @app.post("/api/generate")
 async def generate_graph(
-    api_key: str = Form(..., description="OpenAI API key"),
-    model: str = Form("openai/gpt-4o"),
+    api_key: str = Form("", description="Optional API key for cloud models"),
+    model: str = Form("ollama_chat/qwen3:4b"),
     context: Optional[str] = Form(None),
     chunk_size: Optional[str] = Form(None),
     temperature: Optional[str] = Form(None),
     cluster: Optional[str] = Form(None),
     source_text: Optional[str] = Form(None),
     text_file: Optional[UploadFile] = File(None),
-    retrieval_model: Optional[str] = Form("sentence-transformers/all-mpnet-base-v2"),
+    retrieval_model: Optional[str] = Form("sentence-transformers/all-MiniLM-L6-v2"),
 ) -> JSONResponse:
     text_fragments: list[str] = []
 
@@ -235,10 +240,13 @@ async def generate_graph(
         if numeric_temperature is None:
             numeric_temperature = 1.0
 
-    kg_gen.init_model(
+    remote_qwen = model == REMOTE_QWEN_MODEL
+    kg_gen = KGGen(
         model=model,
-        api_key=api_key,
-        temperature=numeric_temperature,
+        max_tokens=4096 if remote_qwen else 16000,
+        api_key="EMPTY" if remote_qwen else api_key,
+        api_base=REMOTE_QWEN_API_BASE if remote_qwen else None,
+        temperature=numeric_temperature if numeric_temperature is not None else 0.0,
         retrieval_model=retrieval_model,
     )
 
@@ -255,13 +263,14 @@ async def generate_graph(
     try:
         graph = kg_gen.generate(
             input_data=request_text,
-            model=model,
-            api_key=api_key,
             context=_clean_str(context) or "",
             chunk_size=numeric_chunk,
-            cluster=_parse_bool(cluster),
             temperature=numeric_temperature,
+            no_dspy=remote_qwen,
+            deduplication_method=None if remote_qwen else DeduplicateMethod.SEMHASH,
         )
+        if _parse_bool(cluster):
+            graph = kg_gen.cluster(graph, context=_clean_str(context) or "")
     except ValidationError as exc:
         logger.exception("KGGen returned validation error")
         raise HTTPException(status_code=400, detail=f"Invalid graph result: {exc}")

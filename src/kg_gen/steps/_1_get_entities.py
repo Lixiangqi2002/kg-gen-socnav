@@ -54,6 +54,37 @@ Here is the text to extract entities from:
     schema = EntitiesResponse.model_json_schema()
     schema["additionalProperties"] = False
 
+    if model.startswith("hosted_vllm/"):
+        response = litellm.completion(
+            model=model,
+            messages=[
+                {
+                    "role": "system",
+                    "content": (
+                        "Extract entities that act as subjects or objects in the source text. "
+                        "Include unnamed but distinct participants such as a woman or a robot. "
+                        "Keep names faithful to the text and do not invent entities. "
+                        "Return only JSON. /no_think"
+                    ),
+                },
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=temperature,
+            max_tokens=2048,
+            response_format={
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "entities_response",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+            api_key=api_key,
+            api_base=api_base,
+        )
+        entities = EntitiesResponse.model_validate_json(response.choices[0].message.content).entities
+        return list(dict.fromkeys(entity.strip() for entity in entities if entity.strip()))
+
     kwargs = {
         "model": model,
         "input": [

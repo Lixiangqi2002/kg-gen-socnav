@@ -717,7 +717,7 @@
     // localStorage keys for caching form inputs
     const CACHE_KEYS = {
         apiKey: 'kg-gen-api-key',
-        model: 'kg-gen-model',
+        model: 'kg-gen-model-v2',
         chunkSize: 'kg-gen-chunk-size',
         temperature: 'kg-gen-temperature',
         cluster: 'kg-gen-cluster',
@@ -1528,8 +1528,8 @@
         const chunkSizeValue = chunkSizeInput.value.trim();
         const temperatureValue = temperatureInput.value.trim();
 
-        if (!apiKey) {
-            const errorMessage = 'Enter your OpenAI API key to generate a graph.';      
+        if (!apiKey && !modelSelect.value.startsWith('ollama_chat/') && !modelSelect.value.startsWith('hosted_vllm/')) {
+            const errorMessage = 'Enter an API key for the selected cloud model.';
             setStatus(errorMessage, 'error');
             showGenerateError(errorMessage);
             return;

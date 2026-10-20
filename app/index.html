@@ -230,12 +230,12 @@
             <!-- Generate from text Mode Content -->
             <div id="generateModeContent">
                 <section class="card" id="generateCard">
-                    <p>Provide your OpenAI API key and either paste text or upload a <code>.txt</code> document. The request
-                        runs through <code>KGGen</code> on this server and never leave your environment.</p>
+                    <p>Paste text or upload a <code>.txt</code> document. Local Ollama and the remote Qwen 30B
+                        do not need an API key. A cloud model requires its API key.</p>
 
                     <div class="field-group">
                         <div>
-                            <label for="apiKey">OpenAI API key</label>
+                            <label for="apiKey">API key (cloud models only)</label>
                             <div class="password-input-container">
                                 <input type="password" id="apiKey" autocomplete="new-password" placeholder="sk-..." />
                                 <button type="button" class="password-toggle" id="passwordToggle" aria-label="Toggle password visibility">
@@ -249,6 +249,8 @@
                             <div>
                                 <label for="model">Model</label>
                                 <select id="model">
+                                    <option value="hosted_vllm/know2socnav-qwen3-30b-a3b">Qwen3 30B A3B (remote)</option>
+                                    <option value="ollama_chat/qwen3:4b">ollama_chat/qwen3:4b (local; may fail on long text)</option>
                                     <option value="openai/gpt-4o">openai/gpt-4o</option>
                                     <option value="openai/gpt-5-nano">openai/gpt-5-nano</option>
                                     <option value="openai/gpt-5">openai/gpt-5</option>
@@ -275,9 +277,9 @@
                             <div>
                                 <label for="retrievalModel">Retrieval Model</label>
                                 <select id="retrievalModel">
-                                    <option value="sentence-transformers/all-mpnet-base-v2">sentence-transformers/all-mpnet-base-v2</option>
-                                    <option value="sentence-transformers/all-MiniLM-L12-v2">sentence-transformers/all-MiniLM-L12-v2</option>
                                     <option value="sentence-transformers/all-MiniLM-L6-v2">sentence-transformers/all-MiniLM-L6-v2</option>
+                                    <option value="sentence-transformers/all-MiniLM-L12-v2">sentence-transformers/all-MiniLM-L12-v2</option>
+                                    <option value="sentence-transformers/all-mpnet-base-v2">sentence-transformers/all-mpnet-base-v2</option>
                                 </select>
                             </div>
                         </div>
