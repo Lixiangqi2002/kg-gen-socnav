@@ -1,6 +1,6 @@
 """Six KGGen pilot graphs from existing Know2SocNav evidence and episodes.
 
-The evidence experiment extracts ten provenance-preserving batches and clusters
+The evidence experiment extracts each source record independently, then clusters
 their aggregate once. Each episode is extracted and clustered independently.
 Outputs are candidates for review, never validated knowledge.
 """
@@ -55,7 +55,12 @@ def counts(graph):
             "edge_clusters": len(graph.edge_clusters or {})}
 
 
-def selected_evidence():
+def selected_evidence(source_path=None):
+    if source_path is not None:
+        chosen = json.loads(Path(source_path).read_text(encoding="utf-8"))
+        if len(chosen) != 100 or len({r["record_id"] for r in chosen}) != 100:
+            raise ValueError("The evidence source manifest must contain 100 distinct records")
+        return chosen
     by_paper = defaultdict(list)
     for path in sorted(EVIDENCE.glob("*/evidence_records/evidence_accepted.jsonl")):
         for line in path.read_text(encoding="utf-8").splitlines():
@@ -77,29 +82,41 @@ def selected_evidence():
     return chosen
 
 
-def extract_evidence_batch(kg, batch, folder):
-    """Split only batches whose Qwen response cannot be parsed."""
+def save_evidence_review_flags(graph, record_id, folder):
+    endpoints = {item for subject, _, obj in graph.relations for item in (subject, obj)}
+    save(folder / "review_flags.json", {
+        "record_id": record_id,
+        "no_entities": not bool(graph.entities),
+        "no_relations": not bool(graph.relations),
+        "isolated_entities": sorted(graph.entities - endpoints),
+        "status": "candidate_requires_source_review",
+    })
+
+
+def extract_evidence_record(kg, record, folder):
+    """Keep extraction local to one Evidence Record and its source sentence."""
     raw_path = folder / "raw_graph.json"
     if raw_path.exists():
-        return Graph.from_file(str(raw_path))
-    text = "\n\n".join(
-        f"[Evidence {r['record_id']}; paper {r['provenance']['paper_id']}; "
-        f"page {r['provenance']['page']}; chunk {r['provenance']['chunk_id']}]\n"
-        f"{r['evidence_text']}" for r in batch)
-    save(folder / "input.json", {"record_ids": [r["record_id"] for r in batch], "text": text})
-    try:
-        graph = kg.generate(input_data=text, no_dspy=True, deduplication_method=None,
-                            context="Paper evidence in social robot navigation. Keep claims tied to evidence IDs.")
-    except Exception as exc:
-        save(folder / "generation_error.json", {"error": repr(exc)})
-        if len(batch) == 1:
-            raise
-        middle = len(batch) // 2
-        graph = kg.aggregate([
-            extract_evidence_batch(kg, batch[:middle], folder / "split_a"),
-            extract_evidence_batch(kg, batch[middle:], folder / "split_b"),
-        ])
+        graph = Graph.from_file(str(raw_path))
+        save_evidence_review_flags(graph, record["record_id"], folder)
+        return graph
+    save(folder / "input.json", {k: record[k] for k in
+                                ("record_id", "evidence_text", "sentence_ids", "provenance")})
+    errors = []
+    for _ in range(3):
+        try:
+            graph = kg.generate(input_data=record["evidence_text"], no_dspy=True,
+                                deduplication_method=None)
+            break
+        except Exception as exc:
+            errors.append(repr(exc))
+    else:
+        save(folder / "generation_error.json", {"attempts": errors})
+        raise RuntimeError(f"Extraction failed for {record['record_id']}: {errors[-1]}")
+    (folder / "generation_error.json").unlink(missing_ok=True)
     save(raw_path, graph_data(graph))
+    save(folder / "raw_counts.json", counts(graph))
+    save_evidence_review_flags(graph, record["record_id"], folder)
     return graph
 
 
@@ -131,14 +148,22 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--only", choices=["evidence", "episodes", "all"], default="all")
+    parser.add_argument("--evidence-sources", type=Path,
+                        help="Frozen sources.json with the exact 100 Evidence Records to replay")
     args = parser.parse_args()
     output = args.output.resolve()
+    if args.only in ("evidence", "all"):
+        legacy = output / "evidence_100"
+        if (legacy / "raw_graph.json").exists() and not (legacy / "records").exists():
+            raise RuntimeError("This output has legacy multi-record batches; use a fresh output directory")
     save(output / "run_config.json", {
         "model": "hosted_vllm/know2socnav-qwen3-30b-a3b",
         "api_base": "http://10.137.6.216:8000/v1",
         "retrieval_model": "sentence-transformers/all-MiniLM-L6-v2",
         "temperature": 0.0,
         "extraction": "KGGen.generate(no_dspy=True, deduplication_method=None)",
+        "evidence_extraction_unit": "one accepted Evidence Record at a time",
+        "evidence_sources": str(args.evidence_sources.resolve()) if args.evidence_sources else "current accepted records",
         "clustering": "KGGen.cluster(default FULL; per episode or once for aggregate evidence)",
         "status": "candidate graphs for review",
     })
@@ -148,18 +173,22 @@ def main():
                retrieval_model="sentence-transformers/all-MiniLM-L6-v2")
 
     if args.only in ("evidence", "all"):
-        records = selected_evidence()
+        records = selected_evidence(args.evidence_sources)
         base = output / "evidence_100"
         base.mkdir(parents=True, exist_ok=True)
-        save(base / "sources.json", [{k: r[k] for k in ("record_id", "evidence_text", "sentence_ids", "provenance")}
-                                     for r in records])
-        batches = [records[i:i + 10] for i in range(0, 100, 10)]
+        sources = [{k: r[k] for k in ("record_id", "evidence_text", "sentence_ids", "provenance")}
+                   for r in records]
+        source_file = base / "sources.json"
+        if (base / "records").exists() and source_file.exists():
+            if json.loads(source_file.read_text(encoding="utf-8")) != sources:
+                raise RuntimeError("Existing record outputs use different Evidence sources; use a fresh output directory")
+        save(source_file, sources)
         graphs = []
-        for i, batch in enumerate(batches, 1):
-            folder = base / f"batch_{i:02d}"
-            graph = extract_evidence_batch(kg, batch, folder)
+        for i, record in enumerate(records, 1):
+            folder = base / "records" / record["record_id"]
+            graph = extract_evidence_record(kg, record, folder)
             graphs.append(graph)
-            print(f"evidence batch {i}/10: {counts(graph)}", flush=True)
+            print(f"evidence {i}/100 {record['record_id']}: {counts(graph)}", flush=True)
         aggregate = kg.aggregate(graphs)
         save(base / "raw_graph.json", graph_data(aggregate))
         save(base / "raw_counts.json", counts(aggregate))
