@@ -1,4 +1,4 @@
-"""Five paper-local KGGen candidate graphs from accepted social-nav review evidence."""
+"""Five paper-local KGGen candidate graphs, extracted one Evidence Record at a time."""
 
 import argparse
 import json
@@ -6,7 +6,6 @@ from collections import defaultdict
 from pathlib import Path
 
 from kg_gen import KGGen
-from kg_gen.models import Graph
 from kg_gen.steps._3_deduplicate import DeduplicateMethod
 
 from socnav_six_run_pilot import EVIDENCE, counts, extract_evidence_record, graph_data, save
@@ -29,15 +28,6 @@ def paper_records(paper_ids=PAPER_IDS):
             raise RuntimeError(f"No accepted evidence for {paper_id}")
         chosen[paper_id].sort(key=lambda record: record["record_id"])
     return chosen
-
-
-def paper_text(paper_id, records):
-    parts = [f"Paper {paper_id}. Each numbered item is one accepted Evidence Record from this paper."]
-    for record in records:
-        provenance = record["provenance"]
-        parts.append(f"[Evidence {record['record_id']}; page {provenance['page']}; "
-                     f"chunk {provenance['chunk_id']}]\n{record['evidence_text']}")
-    return "\n\n".join(parts)
 
 
 def audit_graph(graph, records, folder):
@@ -64,7 +54,7 @@ def audit_graph(graph, records, folder):
     })
 
 
-def fallback_recordwise(kg, paper_id, records, output, skip_clustering=False):
+def run_recordwise(kg, paper_id, records, output, skip_clustering=False):
     folder = output / "papers" / f"{paper_id}_recordwise"
     sources = [{key: r[key] for key in ("record_id", "evidence_text", "sentence_ids", "provenance")}
                for r in records]
@@ -109,8 +99,6 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--paper-ids", nargs="+", choices=PAPER_IDS, default=list(PAPER_IDS))
-    parser.add_argument("--fallback-per-record", action="store_true",
-                        help="Extract each Evidence Record separately for selected papers")
     parser.add_argument("--skip-clustering", action="store_true",
                         help="Save raw graphs first; avoid blocking on LLM deduplication")
     args = parser.parse_args()
@@ -119,10 +107,8 @@ def main():
     output = args.output.resolve()
     save(output / "run_config.json", {
         "paper_ids": paper_ids,
-        "extraction_unit": ("one Evidence Record per call, aggregated within each paper"
-                            if args.fallback_per_record else
-                            "all accepted Evidence Records from one paper per call"),
-        "clustering": "KGGen SEMHASH for recordwise fallback; KGGen default FULL for whole paper",
+        "extraction_unit": "one Evidence Record per call, aggregated within each paper",
+        "clustering": "KGGen SEMHASH separately for each paper",
         "model": "hosted_vllm/know2socnav-qwen3-30b-a3b",
         "status": "candidate graphs for source review",
     })
@@ -131,46 +117,7 @@ def main():
                temperature=0.0, retrieval_model="sentence-transformers/all-MiniLM-L6-v2")
     for paper_id in paper_ids:
         records = records_by_paper[paper_id]
-        if args.fallback_per_record:
-            fallback_recordwise(kg, paper_id, records, output, args.skip_clustering)
-            continue
-        folder = output / "papers" / paper_id
-        sources = [{key: record[key] for key in ("record_id", "evidence_text", "sentence_ids", "provenance")}
-                   for record in records]
-        source_file = folder / "sources.json"
-        if source_file.exists() and json.loads(source_file.read_text(encoding="utf-8")) != sources:
-            raise RuntimeError(f"Sources changed for {paper_id}; use a fresh output directory")
-        save(source_file, sources)
-        text = paper_text(paper_id, records)
-        save(folder / "input.json", {"paper_id": paper_id, "record_ids": [r["record_id"] for r in records],
-                                     "text": text})
-        raw_path = folder / "raw_graph.json"
-        if raw_path.exists():
-            raw = Graph.from_file(str(raw_path))
-        else:
-            try:
-                raw = kg.generate(input_data=text, no_dspy=True, deduplication_method=None,
-                                  context="Social robot navigation review paper. Keep each claim tied to its numbered Evidence Record.")
-            except Exception as exc:
-                save(folder / "generation_error.json", {"error": repr(exc)})
-                print(f"{paper_id}: generation_failed {exc!r}", flush=True)
-                continue
-            save(raw_path, graph_data(raw))
-            (folder / "generation_error.json").unlink(missing_ok=True)
-        save(folder / "raw_counts.json", counts(raw))
-        audit_graph(raw, records, folder)
-        clustered_path = folder / "clustered_graph.json"
-        if not clustered_path.exists():
-            try:
-                clustered = kg.cluster(raw, context=f"Social robot navigation review paper {paper_id}")
-                save(clustered_path, graph_data(clustered))
-                save(folder / "clustered_counts.json", counts(clustered))
-                (folder / "cluster_error.json").unlink(missing_ok=True)
-            except Exception as exc:
-                save(folder / "cluster_error.json", {"error": repr(exc)})
-                print(f"{paper_id}: cluster_failed {exc!r}", flush=True)
-                continue
-        print(f"{paper_id}: {len(records)} evidence, raw {counts(raw)}", flush=True)
+        run_recordwise(kg, paper_id, records, output, args.skip_clustering)
 
 
 if __name__ == "__main__":
