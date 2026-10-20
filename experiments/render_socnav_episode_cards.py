@@ -140,7 +140,7 @@ def render_episode(episode_dir, output_dir):
     right_x, right_y, right_w = 1228, 170, 1708
     draw.rounded_rectangle((right_x, right_y, right_x + right_w, height - 90),
                            radius=24, fill="white", outline="#d9e1e8", width=2)
-    draw.text((right_x + 32, right_y + 27), "SITUATED GRAPH CANDIDATE", fill="#17314b", font=label_font)
+    draw.text((right_x + 32, right_y + 27), "KGGEN RELATION SKETCH", fill="#17314b", font=label_font)
     graph_box = (right_x + 35, right_y + 85, right_w - 70, 1380)
     picture = graph_image(graph, graph_box[2], graph_box[3])
     if picture:
@@ -164,7 +164,7 @@ def render_episode(episode_dir, output_dir):
                   "Unlinked entities: " + ", ".join(short(x, 24) for x in isolated[:7]),
                   fill="#5c6975", font=small_font)
     draw.text((64, height - 56),
-              "Exact source fields from episode_resources. KGGen graph is an unreviewed candidate; no relation was added for display.",
+              "Exact source fields from episode_resources. KGGen edges are incomplete, unreviewed candidates; no relation was added for display.",
               fill="#526577", font=small_font)
     output_dir.mkdir(parents=True, exist_ok=True)
     path = output_dir / f"{episode_id}.png"
