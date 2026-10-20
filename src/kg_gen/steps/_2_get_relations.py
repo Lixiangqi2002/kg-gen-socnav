@@ -105,6 +105,7 @@ def _get_relations_litellm(
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
     temperature: float = 0.0,
+    max_tokens: int = 2048,
 ) -> List[Tuple[str, str, str]]:
     if not entities:
         return []
@@ -153,7 +154,7 @@ Here is the source text to analyze:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -266,6 +267,7 @@ def get_relations(
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
     temperature: float = 0.0,
+    max_tokens: int = 2048,
 ) -> List[Tuple[str, str, str]]:
     # Filter out entities containing backslashes
     entities = _filter_entities(entities)
@@ -278,6 +280,7 @@ def get_relations(
             api_key=api_key,
             api_base=api_base,
             temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     class Relation(BaseModel):

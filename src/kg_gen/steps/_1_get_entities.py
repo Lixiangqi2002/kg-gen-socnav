@@ -40,6 +40,7 @@ def _get_entities_litellm(
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
     temperature: float = 0.0,
+    max_tokens: int = 2048,
 ) -> List[str]:
     prompt_template = _load_entities_prompt()
     user_prompt = f"""
@@ -70,7 +71,7 @@ Here is the text to extract entities from:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=temperature,
-            max_tokens=2048,
+            max_tokens=max_tokens,
             response_format={
                 "type": "json_schema",
                 "json_schema": {
@@ -121,6 +122,7 @@ def get_entities(
     api_key: Optional[str] = None,
     api_base: Optional[str] = None,
     temperature: float = 0.0,
+    max_tokens: int = 2048,
 ) -> List[str]:
     if use_litellm_prompt and not is_conversation:
         return _get_entities_litellm(
@@ -129,6 +131,7 @@ def get_entities(
             api_key=api_key,
             api_base=api_base,
             temperature=temperature,
+            max_tokens=max_tokens,
         )
 
     extract = (

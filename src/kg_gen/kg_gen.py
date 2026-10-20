@@ -224,6 +224,7 @@ class KGGen:
                     temperature=temperature
                     if temperature is not None
                     else self.temperature,
+                    max_tokens=self.max_tokens,
                 )
                 relations = get_relations(
                     content,
@@ -236,6 +237,7 @@ class KGGen:
                     temperature=temperature
                     if temperature is not None
                     else self.temperature,
+                    max_tokens=self.max_tokens,
                 )
                 return entities, relations
 
