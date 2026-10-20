@@ -100,6 +100,8 @@ def _socnav_graph_path(run_dir: Path, graph_id: str, stage: str) -> Path:
         raise HTTPException(status_code=400, detail="Invalid graph stage")
     if graph_id == "evidence_100":
         folder = run_dir / "evidence_100"
+    elif re.fullmatch(r"SOC-REV-[0-9]{3}(?:_recordwise)?", graph_id):
+        folder = run_dir / "papers" / graph_id
     elif re.fullmatch(r"(?:SNEI|MUSON)_EPISODE_[a-zA-Z0-9]+", graph_id):
         folder = run_dir / "episodes" / graph_id
     else:
@@ -136,6 +138,9 @@ async def list_socnav_runs() -> JSONResponse:
             if not run_dir.is_dir() or not re.fullmatch(r"[A-Za-z0-9_-]+", run_dir.name):
                 continue
             folders = [run_dir / "evidence_100"]
+            papers = run_dir / "papers"
+            if papers.is_dir():
+                folders.extend(sorted(p for p in papers.iterdir() if p.is_dir()))
             episodes = run_dir / "episodes"
             if episodes.is_dir():
                 folders.extend(sorted(p for p in episodes.iterdir() if p.is_dir()))
