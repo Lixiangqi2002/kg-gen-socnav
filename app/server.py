@@ -110,6 +110,24 @@ def _socnav_graph_path(run_dir: Path, graph_id: str, stage: str) -> Path:
     return path
 
 
+def _socnav_view(graph: Graph, show_isolated: bool) -> tuple[dict, dict]:
+    endpoints = {item for subject, _, obj in graph.relations for item in (subject, obj)}
+    original_entities = set(graph.entities)
+    isolated = original_entities - endpoints
+    missing_endpoints = endpoints - original_entities
+    visible_entities = (original_entities | endpoints) if show_isolated or not endpoints else endpoints
+    visible_graph = graph.model_copy(update={
+        "entities": visible_entities,
+        "entity_clusters": {key: members for key, members in (graph.entity_clusters or {}).items()
+                            if key in visible_entities},
+    })
+    diagnostics = {"isolated_entities": len(isolated),
+                   "missing_relation_endpoints": len(missing_endpoints),
+                   "hidden_isolated": len(isolated) if endpoints and not show_isolated else 0,
+                   "relations": len(graph.relations)}
+    return _build_view_model(visible_graph), diagnostics
+
+
 @app.get("/api/socnav/runs")
 async def list_socnav_runs() -> JSONResponse:
     runs = []
@@ -141,22 +159,25 @@ async def list_socnav_runs() -> JSONResponse:
 
 
 @app.get("/api/socnav/runs/{run_id}/graphs/{graph_id}")
-async def load_socnav_graph(run_id: str, graph_id: str, stage: str = "clustered") -> JSONResponse:
+async def load_socnav_graph(run_id: str, graph_id: str, stage: str = "clustered",
+                            show_isolated: bool = False) -> JSONResponse:
     path = _socnav_graph_path(_socnav_run_dir(run_id), graph_id, stage)
     try:
         graph = Graph.model_validate_json(path.read_text(encoding="utf-8"))
     except (OSError, ValidationError) as exc:
         raise HTTPException(status_code=500, detail=f"Saved graph is invalid: {exc}") from exc
+    view, diagnostics = _socnav_view(graph, show_isolated)
     return JSONResponse({"graph": graph.model_dump(mode="json"),
-                         "view": _build_view_model(graph), "stage": stage})
+                         "view": view, "diagnostics": diagnostics, "stage": stage})
 
 
 @app.get("/api/socnav/runs/{run_id}/graphs/{graph_id}/visualization", response_class=HTMLResponse)
-async def visualize_socnav_graph(run_id: str, graph_id: str, stage: str = "clustered") -> HTMLResponse:
+async def visualize_socnav_graph(run_id: str, graph_id: str, stage: str = "clustered",
+                                  show_isolated: bool = False) -> HTMLResponse:
     path = _socnav_graph_path(_socnav_run_dir(run_id), graph_id, stage)
     try:
         graph = Graph.model_validate_json(path.read_text(encoding="utf-8"))
-        view = _build_view_model(graph)
+        view, _ = _socnav_view(graph, show_isolated)
     except (OSError, ValidationError) as exc:
         raise HTTPException(status_code=500, detail=f"Saved graph is invalid: {exc}") from exc
     payload = json.dumps(view, ensure_ascii=False).replace("<", "\\u003c")

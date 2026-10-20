@@ -1797,6 +1797,7 @@
 
     const socnavRunSelect = document.getElementById('socnavRun');
     const socnavGraphSelect = document.getElementById('socnavGraph');
+    const socnavShowIsolated = document.getElementById('socnavShowIsolated');
     const socnavStatus = document.getElementById('socnavStatus');
     let socnavLoading = false;
     let socnavSignature = '';
@@ -1844,17 +1845,22 @@
                 socnavStatus.textContent = graph ? `${graph.id}: ${graph.status}` : 'Waiting for a saved graph.';
                 return;
             }
-            const signature = `${run.id}/${graph.id}/${graph.stage}/${graph.modified}`;
+            const signature = `${run.id}/${graph.id}/${graph.stage}/${graph.modified}/${socnavShowIsolated.checked}`;
             socnavStatus.textContent = `${graph.id}: ${graph.stage}; checking every 5 seconds.`;
             if (signature === socnavSignature) return;
-            const url = `/api/socnav/runs/${encodeURIComponent(run.id)}/graphs/${encodeURIComponent(graph.id)}?stage=${graph.stage}`;
+            const graphBase = `/api/socnav/runs/${encodeURIComponent(run.id)}/graphs/${encodeURIComponent(graph.id)}`;
+            const query = `stage=${graph.stage}&show_isolated=${socnavShowIsolated.checked}`;
+            const url = `${graphBase}?${query}`;
             const graphResponse = await fetch(url, { cache: 'no-store' });
             if (!graphResponse.ok) throw new Error(`Graph returned ${graphResponse.status}`);
             const payload = await graphResponse.json();
-            const visualUrl = `${url.replace(/\?stage=.*/, '/visualization')}?stage=${graph.stage}&version=${graph.modified}`;
+            const visualUrl = `${graphBase}/visualization?${query}&version=${graph.modified}`;
             await renderView(payload.view, payload.graph, visualUrl);
             socnavSignature = signature;
-            socnavStatus.textContent = `${graph.id}: ${graph.stage} graph displayed.`;
+            const diagnostics = payload.diagnostics;
+            socnavStatus.textContent = diagnostics.relations === 0
+                ? `${graph.id}: no relations extracted; showing all entities.`
+                : `${graph.id}: ${graph.stage}; ${diagnostics.isolated_entities} isolated, ${diagnostics.hidden_isolated} hidden; ${diagnostics.missing_relation_endpoints} missing endpoints in saved entity list.`;
         } catch (error) {
             socnavStatus.textContent = `Pilot display: ${error.message}`;
         } finally {
@@ -1868,6 +1874,10 @@
         refreshSocnavRuns();
     });
     socnavGraphSelect?.addEventListener('change', () => {
+        socnavSignature = '';
+        refreshSocnavRuns();
+    });
+    socnavShowIsolated?.addEventListener('change', () => {
         socnavSignature = '';
         refreshSocnavRuns();
     });

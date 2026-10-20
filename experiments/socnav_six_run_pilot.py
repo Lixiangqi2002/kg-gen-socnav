@@ -34,6 +34,11 @@ def save(path, obj):
 
 
 def graph_data(graph):
+    # KGGen clustering can return relation endpoints absent from its entity set.
+    # Keep the saved graph internally complete without inventing relations.
+    for subject, predicate, obj in graph.relations:
+        graph.entities.update((subject, obj))
+        graph.edges.add(predicate)
     return {
         "entities": sorted(graph.entities),
         "edges": sorted(graph.edges),
