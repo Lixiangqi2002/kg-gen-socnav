@@ -8,6 +8,7 @@ from pathlib import Path
 from kg_gen import KGGen
 from kg_gen.steps._3_deduplicate import DeduplicateMethod
 
+from socnav_plain_evidence import extract_plain_record
 from socnav_six_run_pilot import EVIDENCE, counts, extract_evidence_record, graph_data, save
 
 
@@ -54,8 +55,9 @@ def audit_graph(graph, records, folder):
     })
 
 
-def run_recordwise(kg, paper_id, records, output, skip_clustering=False):
-    folder = output / "papers" / f"{paper_id}_recordwise"
+def run_recordwise(kg, paper_id, records, output, input_mode="plain", skip_clustering=False):
+    suffix = "plain_recordwise" if input_mode == "plain" else "recordwise"
+    folder = output / "papers" / f"{paper_id}_{suffix}"
     sources = [{key: r[key] for key in ("record_id", "evidence_text", "sentence_ids", "provenance")}
                for r in records]
     source_file = folder / "sources.json"
@@ -66,13 +68,22 @@ def run_recordwise(kg, paper_id, records, output, skip_clustering=False):
     failed = []
     for i, record in enumerate(records, 1):
         try:
-            graph = extract_evidence_record(kg, record, folder / "records" / record["record_id"])
+            extract = extract_plain_record if input_mode == "plain" else extract_evidence_record
+            graph = extract(kg, record, folder / "records" / record["record_id"])
             graphs.append(graph)
             print(f"{paper_id} record {i}/{len(records)}: {counts(graph)}", flush=True)
         except Exception as exc:
             failed.append({"record_id": record["record_id"], "error": repr(exc)})
             print(f"{paper_id} record {i}/{len(records)}: failed {exc!r}", flush=True)
     save(folder / "record_failures.json", failed)
+    audit_missing = [record["record_id"] for record in records
+                     if input_mode == "plain" and
+                     not (folder / "records" / record["record_id"] / "source_audit.json").exists()]
+    save(folder / "paper_status.json", {
+        "paper_id": paper_id, "source_records": len(records), "extracted_records": len(graphs),
+        "failed_records": failed, "source_audits_missing": audit_missing,
+        "status": "complete" if not failed and not audit_missing else "needs_attention",
+    })
     if not graphs:
         return
     raw = kg.aggregate(graphs)
@@ -99,6 +110,7 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--paper-ids", nargs="+", choices=PAPER_IDS, default=list(PAPER_IDS))
+    parser.add_argument("--input-mode", choices=("plain", "original"), default="plain")
     parser.add_argument("--skip-clustering", action="store_true",
                         help="Save raw graphs first; avoid blocking on LLM deduplication")
     args = parser.parse_args()
@@ -108,16 +120,19 @@ def main():
     save(output / "run_config.json", {
         "paper_ids": paper_ids,
         "extraction_unit": "one Evidence Record per call, aggregated within each paper",
+        "input_mode": args.input_mode,
         "clustering": "KGGen SEMHASH separately for each paper",
+        "review": "Plain rephrase and every edge get a Qwen source check; human review remains required",
         "model": "hosted_vllm/know2socnav-qwen3-30b-a3b",
         "status": "candidate graphs for source review",
     })
     kg = KGGen(model="hosted_vllm/know2socnav-qwen3-30b-a3b", api_key="EMPTY",
-               api_base="http://10.137.6.216:8000/v1", max_tokens=4096,
+               api_base="http://10.137.6.216:8000/v1",
+               max_tokens=1024 if args.input_mode == "plain" else 4096,
                temperature=0.0, retrieval_model="sentence-transformers/all-MiniLM-L6-v2")
     for paper_id in paper_ids:
         records = records_by_paper[paper_id]
-        run_recordwise(kg, paper_id, records, output, args.skip_clustering)
+        run_recordwise(kg, paper_id, records, output, args.input_mode, args.skip_clustering)
 
 
 if __name__ == "__main__":
