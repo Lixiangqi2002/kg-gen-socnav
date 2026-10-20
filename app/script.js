@@ -1308,15 +1308,18 @@
         return templateHtml;
     }
 
-    async function renderView(viewModel, graphForDownload) {
+    async function renderView(viewModel, graphForDownload, sourceUrl = null) {
         console.info('[kg-gen] Rendering view model');
         showLoadingInViewer('Rendering Graph', 'Building visualization...');
-        await loadTemplate();
-        const html = templateHtml.replace('<!--DATA-->', `\n${sanitizeJson(viewModel)}\n`);
         if (activeUrl) {
             URL.revokeObjectURL(activeUrl);
+            activeUrl = null;
         }
-        activeUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        if (!sourceUrl) {
+            await loadTemplate();
+            const html = templateHtml.replace('<!--DATA-->', `\n${sanitizeJson(viewModel)}\n`);
+            activeUrl = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        }
 
         let fallbackTimer = null;
 
@@ -1354,7 +1357,7 @@
             hideLoadingInViewer();
         }, 5000);
 
-        viewer.src = activeUrl;
+        viewer.src = sourceUrl || activeUrl;
         viewer.removeAttribute('hidden');
         if (viewerWrapper) {
             viewerWrapper.classList.add('graph-loaded');
@@ -1363,7 +1366,7 @@
         lastViewModel = viewModel;
         setStatus(extractSummary(viewModel), 'success');
         refreshCallbacks.length = 0;
-        refreshCallbacks.push(() => renderView(lastViewModel, lastGraphPayload));
+        refreshCallbacks.push(() => renderView(lastViewModel, lastGraphPayload, sourceUrl));
         hasLoadedGraph = true;
 
         // Notify sidebar manager about the new graph data
@@ -1792,6 +1795,85 @@
         latest?.();
     });
 
+    const socnavRunSelect = document.getElementById('socnavRun');
+    const socnavGraphSelect = document.getElementById('socnavGraph');
+    const socnavStatus = document.getElementById('socnavStatus');
+    let socnavLoading = false;
+    let socnavSignature = '';
+    const socnavAutoFollow = new URLSearchParams(window.location.search).get('socnav') === 'latest';
+
+    function setSocnavOptions(select, values, selected) {
+        select.replaceChildren();
+        for (const [value, label] of values) {
+            const option = document.createElement('option');
+            option.value = value;
+            option.textContent = label;
+            select.appendChild(option);
+        }
+        select.value = values.some(([value]) => value === selected) ? selected : values[0][0];
+    }
+
+    async function refreshSocnavRuns() {
+        if (!socnavRunSelect || socnavLoading) return;
+        socnavLoading = true;
+        try {
+            const response = await fetch('/api/socnav/runs', { cache: 'no-store' });
+            if (!response.ok) throw new Error(`Run list returned ${response.status}`);
+            const runs = await response.json();
+            const wantedRun = socnavRunSelect.value || (socnavAutoFollow ? 'latest' : '');
+            setSocnavOptions(socnavRunSelect,
+                [['', 'Select a run'], ['latest', 'Latest run'], ...runs.map(run => [run.id, run.id])],
+                wantedRun);
+            const run = socnavRunSelect.value === 'latest' ? runs[0]
+                : runs.find(item => item.id === socnavRunSelect.value);
+            const wantedGraph = socnavGraphSelect.value || (socnavAutoFollow ? 'latest' : '');
+            const graphOptions = [['', 'Select a graph'], ['latest', 'Follow latest graph']];
+            if (run) {
+                graphOptions.push(...run.graphs.map(graph =>
+                    [graph.id, `${graph.id} (${graph.status})`]));
+            }
+            setSocnavOptions(socnavGraphSelect, graphOptions, wantedGraph);
+            if (!run || !socnavGraphSelect.value) {
+                socnavStatus.textContent = runs.length ? 'Select a run and graph.' : 'Waiting for a pilot run.';
+                return;
+            }
+            const graph = socnavGraphSelect.value === 'latest'
+                ? [...run.graphs].filter(item => item.stage).sort((a, b) => b.modified - a.modified)[0]
+                : run.graphs.find(item => item.id === socnavGraphSelect.value);
+            if (!graph || !graph.stage) {
+                socnavStatus.textContent = graph ? `${graph.id}: ${graph.status}` : 'Waiting for a saved graph.';
+                return;
+            }
+            const signature = `${run.id}/${graph.id}/${graph.stage}/${graph.modified}`;
+            socnavStatus.textContent = `${graph.id}: ${graph.stage}; checking every 5 seconds.`;
+            if (signature === socnavSignature) return;
+            const url = `/api/socnav/runs/${encodeURIComponent(run.id)}/graphs/${encodeURIComponent(graph.id)}?stage=${graph.stage}`;
+            const graphResponse = await fetch(url, { cache: 'no-store' });
+            if (!graphResponse.ok) throw new Error(`Graph returned ${graphResponse.status}`);
+            const payload = await graphResponse.json();
+            const visualUrl = `${url.replace(/\?stage=.*/, '/visualization')}?stage=${graph.stage}&version=${graph.modified}`;
+            await renderView(payload.view, payload.graph, visualUrl);
+            socnavSignature = signature;
+            socnavStatus.textContent = `${graph.id}: ${graph.stage} graph displayed.`;
+        } catch (error) {
+            socnavStatus.textContent = `Pilot display: ${error.message}`;
+        } finally {
+            socnavLoading = false;
+        }
+    }
+
+    socnavRunSelect?.addEventListener('change', () => {
+        socnavSignature = '';
+        socnavGraphSelect.value = 'latest';
+        refreshSocnavRuns();
+    });
+    socnavGraphSelect?.addEventListener('change', () => {
+        socnavSignature = '';
+        refreshSocnavRuns();
+    });
+    refreshSocnavRuns();
+    setInterval(refreshSocnavRuns, 5000);
+
     // Initialize when DOM is ready
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => {
@@ -1809,9 +1891,11 @@
     loadTemplate().catch(() => {
         /* Status already updated in loadTemplate */
     });
-    loadInitialExampleGraph().catch(() => {
-        /* Errors handled inside loadExamples */
-    });
+    if (!socnavAutoFollow) {
+        loadInitialExampleGraph().catch(() => {
+            /* Errors handled inside loadExamples */
+        });
+    }
 
     // Global functions for action buttons
     window.openGraphViewer = function() {

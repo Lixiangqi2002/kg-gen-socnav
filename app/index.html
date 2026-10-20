@@ -93,6 +93,18 @@
 
             </div>
             <!-- Analysis Mode Content -->
+            <section class="card" style="margin: 12px; padding: 12px;">
+                <strong>SocNav pilot runs</strong>
+                <div class="field" style="margin-top: 8px;">
+                    <label for="socnavRun">Run</label>
+                    <select id="socnavRun"><option value="">Loading runs...</option></select>
+                </div>
+                <div class="field" style="margin-top: 8px;">
+                    <label for="socnavGraph">Graph</label>
+                    <select id="socnavGraph"><option value="">Select a run</option></select>
+                </div>
+                <div class="hint" id="socnavStatus" aria-live="polite">Checks saved graphs every 5 seconds.</div>
+            </section>
             <div class="sidebar-mode-content" id="analysisModeContent" style="display: none;">
                 <div class="analysis-placeholder">
                     <p>Load or generate a graph to see analysis here.</p>

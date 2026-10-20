@@ -4,6 +4,7 @@ from pathlib import Path
 from typing import Optional
 import json
 import os
+import re
 
 import logging
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -80,6 +81,87 @@ REMOTE_QWEN_MODEL = "hosted_vllm/know2socnav-qwen3-30b-a3b"
 REMOTE_QWEN_API_BASE = os.environ.get(
     "KGGEN_REMOTE_QWEN_API_BASE", "http://10.137.6.216:8000/v1"
 )
+SOCNAV_RUNS_ROOT = Path(os.environ.get(
+    "KGGEN_SOCNAV_RUNS_ROOT", "/data/code/Know2SocNav/data/kg-gen-socnav/runs"
+)).resolve()
+
+
+def _socnav_run_dir(run_id: str) -> Path:
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", run_id):
+        raise HTTPException(status_code=400, detail="Invalid run ID")
+    run_dir = SOCNAV_RUNS_ROOT / run_id
+    if not run_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run_dir
+
+
+def _socnav_graph_path(run_dir: Path, graph_id: str, stage: str) -> Path:
+    if stage not in {"raw", "clustered"}:
+        raise HTTPException(status_code=400, detail="Invalid graph stage")
+    if graph_id == "evidence_100":
+        folder = run_dir / "evidence_100"
+    elif re.fullmatch(r"(?:SNEI|MUSON)_EPISODE_[a-zA-Z0-9]+", graph_id):
+        folder = run_dir / "episodes" / graph_id
+    else:
+        raise HTTPException(status_code=400, detail="Invalid graph ID")
+    path = folder / f"{stage}_graph.json"
+    if not path.is_file():
+        raise HTTPException(status_code=404, detail="Graph is not ready")
+    return path
+
+
+@app.get("/api/socnav/runs")
+async def list_socnav_runs() -> JSONResponse:
+    runs = []
+    if SOCNAV_RUNS_ROOT.is_dir():
+        for run_dir in sorted(SOCNAV_RUNS_ROOT.iterdir(), reverse=True):
+            if not run_dir.is_dir() or not re.fullmatch(r"[A-Za-z0-9_-]+", run_dir.name):
+                continue
+            folders = [run_dir / "evidence_100"]
+            episodes = run_dir / "episodes"
+            if episodes.is_dir():
+                folders.extend(sorted(p for p in episodes.iterdir() if p.is_dir()))
+            graphs = []
+            for folder in folders:
+                if not folder.is_dir():
+                    continue
+                stage = next((s for s in ("clustered", "raw")
+                              if (folder / f"{s}_graph.json").is_file()), None)
+                path = folder / f"{stage}_graph.json" if stage else None
+                status = ("cluster_failed" if stage == "raw" and
+                          (folder / "cluster_error.json").is_file() else stage)
+                if status is None:
+                    status = ("generation_failed" if (folder / "generation_error.json").is_file()
+                              else "pending")
+                graphs.append({"id": folder.name, "status": status,
+                               "stage": stage, "modified": path.stat().st_mtime_ns if path else 0})
+            if graphs:
+                runs.append({"id": run_dir.name, "graphs": graphs})
+    return JSONResponse(runs)
+
+
+@app.get("/api/socnav/runs/{run_id}/graphs/{graph_id}")
+async def load_socnav_graph(run_id: str, graph_id: str, stage: str = "clustered") -> JSONResponse:
+    path = _socnav_graph_path(_socnav_run_dir(run_id), graph_id, stage)
+    try:
+        graph = Graph.model_validate_json(path.read_text(encoding="utf-8"))
+    except (OSError, ValidationError) as exc:
+        raise HTTPException(status_code=500, detail=f"Saved graph is invalid: {exc}") from exc
+    return JSONResponse({"graph": graph.model_dump(mode="json"),
+                         "view": _build_view_model(graph), "stage": stage})
+
+
+@app.get("/api/socnav/runs/{run_id}/graphs/{graph_id}/visualization", response_class=HTMLResponse)
+async def visualize_socnav_graph(run_id: str, graph_id: str, stage: str = "clustered") -> HTMLResponse:
+    path = _socnav_graph_path(_socnav_run_dir(run_id), graph_id, stage)
+    try:
+        graph = Graph.model_validate_json(path.read_text(encoding="utf-8"))
+        view = _build_view_model(graph)
+    except (OSError, ValidationError) as exc:
+        raise HTTPException(status_code=500, detail=f"Saved graph is invalid: {exc}") from exc
+    payload = json.dumps(view, ensure_ascii=False).replace("<", "\\u003c")
+    html = TEMPLATE_PATH.read_text(encoding="utf-8").replace("<!--DATA-->", payload)
+    return HTMLResponse(html)
 
 
 @app.get("/", response_class=HTMLResponse)
