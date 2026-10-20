@@ -374,7 +374,7 @@ async def generate_graph(
             context=_clean_str(context) or "",
             chunk_size=numeric_chunk,
             temperature=numeric_temperature,
-            no_dspy=remote_qwen,
+            no_dspy=False,
             deduplication_method=None if remote_qwen else DeduplicateMethod.SEMHASH,
         )
         if _parse_bool(cluster):

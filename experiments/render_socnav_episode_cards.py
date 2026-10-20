@@ -98,7 +98,8 @@ def render_episode(episode_dir, output_dir):
     clustered = episode_dir / "clustered_graph.json"
     raw = episode_dir / "raw_graph.json"
     stage = ("clustered" if clustered.exists() else
-             "raw / cluster failed" if raw.exists() else "generation failed")
+             "raw / cluster failed" if (episode_dir / "cluster_error.json").exists() else
+             "raw / not clustered" if raw.exists() else "generation failed")
     graph = (json.loads((clustered if clustered.exists() else raw).read_text(encoding="utf-8"))
              if raw.exists() else {"entities": [], "relations": []})
     sections = source_sections(episode_id)
