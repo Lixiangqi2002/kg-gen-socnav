@@ -28,6 +28,5 @@ review decides which corrections to accept. A reviewed source-local graph is
 still separate from reusable cross-case knowledge.
 
 The service unit in `deploy/kggen-explorer.service` runs this copy of the code.
-Its Python runtime currently uses the existing KGGen virtual environment under
-`/data/code/kg-gen/.venv`. `PYTHONPATH` points at this directory's `src`, so
-imports resolve to the Know2SocNav copy.
+Its Python runtime is the ignored `.venv` in this directory. `PYTHONPATH`
+points at this directory's `src`, so imports resolve to the Know2SocNav copy.

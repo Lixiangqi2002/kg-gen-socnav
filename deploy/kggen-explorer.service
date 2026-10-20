@@ -7,7 +7,7 @@ Type=simple
 WorkingDirectory=/data/code/Know2SocNav/src/kg-gen-socnav
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONPATH=/data/code/Know2SocNav/src/kg-gen-socnav/src
-ExecStart=/data/code/kg-gen/.venv/bin/uvicorn app.server:app --host 127.0.0.1 --port 8765
+ExecStart=/data/code/Know2SocNav/src/kg-gen-socnav/.venv/bin/python -m uvicorn app.server:app --host 127.0.0.1 --port 8765
 Restart=on-failure
 RestartSec=5
 
