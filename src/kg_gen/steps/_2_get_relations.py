@@ -1,4 +1,4 @@
-from typing import List, Tuple, Optional, Literal, Type
+from typing import Callable, List, Tuple, Optional, Literal, Type
 from pathlib import Path
 import json
 import dspy
@@ -106,6 +106,8 @@ def _get_relations_litellm(
     api_base: Optional[str] = None,
     temperature: float = 0.0,
     max_tokens: int = 2048,
+    response_hook: Optional[Callable[[str, Optional[str]], None]] = None,
+    strict_entity_schema: bool = True,
 ) -> List[Tuple[str, str, str]]:
     if not entities:
         return []
@@ -130,6 +132,10 @@ Here is the source text to analyze:
 
     # Build schema with additionalProperties: false (required by OpenAI)
     schema = RelationsResponse.model_json_schema()
+    if not strict_entity_schema:
+        relation_item = schema["$defs"]["RelationItem"]
+        relation_item["properties"]["subject"] = {"type": "string"}
+        relation_item["properties"]["object"] = {"type": "string"}
     schema["additionalProperties"] = False
     # Also need to set additionalProperties on nested objects
     if "$defs" in schema:
@@ -166,8 +172,13 @@ Here is the source text to analyze:
             api_key=api_key,
             api_base=api_base,
         )
+        choice = response.choices[0]
+        if response_hook:
+            response_hook(choice.message.content or "", choice.finish_reason)
+        if choice.finish_reason == "length":
+            raise ValueError("Relation response reached max_tokens before completion")
         relations = parse_relations_response(
-            response.choices[0].message.content, entities, RelationsResponse
+            choice.message.content, entities, RelationsResponse
         )
         return [relation for relation in relations if relation[0] != relation[2]]
 
@@ -268,6 +279,8 @@ def get_relations(
     api_base: Optional[str] = None,
     temperature: float = 0.0,
     max_tokens: int = 2048,
+    response_hook: Optional[Callable[[str, Optional[str]], None]] = None,
+    strict_entity_schema: bool = True,
 ) -> List[Tuple[str, str, str]]:
     # Filter out entities containing backslashes
     entities = _filter_entities(entities)
@@ -281,6 +294,8 @@ def get_relations(
             api_base=api_base,
             temperature=temperature,
             max_tokens=max_tokens,
+            response_hook=response_hook,
+            strict_entity_schema=strict_entity_schema,
         )
 
     class Relation(BaseModel):

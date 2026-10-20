@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Callable, List, Optional
 from pathlib import Path
 import dspy
 import litellm
@@ -41,6 +41,7 @@ def _get_entities_litellm(
     api_base: Optional[str] = None,
     temperature: float = 0.0,
     max_tokens: int = 2048,
+    response_hook: Optional[Callable[[str, Optional[str]], None]] = None,
 ) -> List[str]:
     prompt_template = _load_entities_prompt()
     user_prompt = f"""
@@ -83,7 +84,12 @@ Here is the text to extract entities from:
             api_key=api_key,
             api_base=api_base,
         )
-        entities = EntitiesResponse.model_validate_json(response.choices[0].message.content).entities
+        choice = response.choices[0]
+        if response_hook:
+            response_hook(choice.message.content or "", choice.finish_reason)
+        if choice.finish_reason == "length":
+            raise ValueError("Entity response reached max_tokens before completion")
+        entities = EntitiesResponse.model_validate_json(choice.message.content).entities
         return list(dict.fromkeys(entity.strip() for entity in entities if entity.strip()))
 
     kwargs = {
@@ -123,6 +129,7 @@ def get_entities(
     api_base: Optional[str] = None,
     temperature: float = 0.0,
     max_tokens: int = 2048,
+    response_hook: Optional[Callable[[str, Optional[str]], None]] = None,
 ) -> List[str]:
     if use_litellm_prompt and not is_conversation:
         return _get_entities_litellm(
@@ -132,6 +139,7 @@ def get_entities(
             api_base=api_base,
             temperature=temperature,
             max_tokens=max_tokens,
+            response_hook=response_hook,
         )
 
     extract = (
